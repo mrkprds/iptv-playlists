@@ -69,12 +69,25 @@ GEO_KEEP = {"PH"}
 # Drop entries tagged [Not 24/7] (part-time regional stations).
 DROP_PART_TIME = False
 
+# Drop entries carrying any of these iptv-org genre tags (tags are ';'-separated).
+GENRE_BLOCKLIST = {"Religious"}
+
 # Channels whose name matches any of these are dropped entirely.
-# Shopping channels are the main offender in most country lists.
+# Shopping channels are the main offender in most country lists; the religious
+# patterns catch channels that arrive untagged from non-iptv-org sources.
 NAME_BLOCKLIST = [
     r"\bshop(ping)?\b",
     r"\bQVC\b",
     r"\bteleshop",
+    r"\bEWTN\b",
+    r"\b3ABN\b",
+    r"\bTV Maria\b",
+    r"\bHope Channel\b",
+    r"\bINC ?(TV|Radio)\b",
+    r"\bCCTN\b",
+    r"\bDaystar\b",
+    r"\bGod TV\b",
+    r"\bTBN\b",
 ]
 
 # ------------------------------------------------------------------ guts ---
@@ -166,6 +179,8 @@ def parse(body, origin, is_country):
         if not url:
             continue
         if blocked(name):
+            continue
+        if any(g.strip() in GENRE_BLOCKLIST for g in genre.split(";")):
             continue
         if DROP_GEOBLOCKED and "[Geo-blocked]" in name:
             if not (is_country and origin in GEO_KEEP):
