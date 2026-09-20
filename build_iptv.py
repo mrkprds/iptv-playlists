@@ -72,14 +72,21 @@ GEO_KEEP = {"PH"}
 # Drop entries tagged [Not 24/7] (part-time regional stations).
 DROP_PART_TIME = False
 
-# Probe every stream after merging and drop the ones that are definitively
-# dead.  Only hard failures count: DNS not resolving, connection refused, or
-# HTTP 404/410/451.  A 403, a timeout or a TLS error is kept, because from the
-# GitHub Actions runner (US) those often just mean "geo-blocked from here".
+# Drop MPEG-DASH (.mpd) streams.  UHF on Apple TV is AVPlayer-based and only
+# advertises M3U8 (HLS) support, so DASH entries are likely unplayable there.
+DROP_DASH = False
+
+# Probe every stream after merging and drop the ones that do not serve a
+# stream.  Dropped: DNS not resolving, connection refused, HTTP 403/404/410/451,
+# or a 200 whose body is not an HLS/DASH manifest or a raw TS stream (typically
+# an HTML page from a dead re-streamer).  A timeout or a TLS error is kept.
+# A 403 is kept for labels in GEO_KEEP: those are expected to be geo-fenced to
+# where the user is, and the probe may run elsewhere (GitHub's US runners).
 CHECK_STREAMS = True
 CHECK_WORKERS = 16
 CHECK_TIMEOUT = 10
-DROP_VERDICTS = {"dns", "refused", "http404", "http410", "http451"}
+DROP_VERDICTS = {"dns", "refused", "http403", "http404", "http410", "http451", "not-a-stream"}
+KEEP_403_FOR = GEO_KEEP
 
 # Drop entries carrying any of these iptv-org genre tags (tags are ';'-separated).
 GENRE_BLOCKLIST = {"Religious"}
@@ -211,6 +218,8 @@ def parse(body, origin, is_country):
                 continue
         if DROP_PART_TIME and "[Not 24/7]" in name:
             continue
+        if DROP_DASH and re.search(r"\.mpd(\?|$)", url):
+            continue
 
         yield Channel(name, attrs, genre, origin, extras, url)
 
@@ -254,8 +263,9 @@ def probe(ch):
         headers["Referer"] = ref
     try:
         with urllib.request.urlopen(urllib.request.Request(ch.url, headers=headers),
-                                    timeout=CHECK_TIMEOUT):
-            return "live"
+                                    timeout=CHECK_TIMEOUT) as r:
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            head = r.read(2048).lstrip()
     except urllib.error.HTTPError as e:
         return f"http{e.code}"
     except urllib.error.URLError as e:
@@ -266,6 +276,10 @@ def probe(ch):
         return "other"
     except Exception:
         return "other"
+    if (head.startswith(b"#EXTM3U") or b"<MPD" in head or head[:1] == b"\x47"
+            or ctype.startswith(("video/", "audio/")) or "mpegurl" in ctype or "dash+xml" in ctype):
+        return "live"
+    return "not-a-stream"
 
 
 def check(channels):
@@ -274,7 +288,7 @@ def check(channels):
         verdicts = list(ex.map(probe, channels))
     kept, dropped = [], {}
     for ch, v in zip(channels, verdicts):
-        if v in DROP_VERDICTS:
+        if v in DROP_VERDICTS and not (v == "http403" and ch.origin in KEEP_403_FOR):
             dropped[v] = dropped.get(v, 0) + 1
         else:
             kept.append(ch)
