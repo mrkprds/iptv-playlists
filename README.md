@@ -1,14 +1,13 @@
 # iptv-playlists
 
-Merged IPTV playlists built from [iptv-org/iptv](https://github.com/iptv-org/iptv),
-rebuilt weekly by a GitHub Action (Monday 02:00 Manila). Load any of these URLs in UHF:
+One merged IPTV playlist built from [iptv-org/iptv](https://github.com/iptv-org/iptv)
+plus [Harleythetech/IPHTV](https://github.com/Harleythetech/IPHTV) for the Philippines,
+rebuilt weekly by a GitHub Action (Monday 02:00 Manila). Load this URL in UHF:
 
 ```
-https://raw.githubusercontent.com/mrkprds/iptv-playlists/main/iptv-flat.m3u
-https://raw.githubusercontent.com/mrkprds/iptv-playlists/main/iptv-by-country.m3u
-https://raw.githubusercontent.com/mrkprds/iptv-playlists/main/iptv-by-genre.m3u
 https://raw.githubusercontent.com/mrkprds/iptv-playlists/main/iptv-country-genre.m3u
-https://raw.githubusercontent.com/mrkprds/iptv-playlists/main/iptv-genre-country.m3u
 ```
+
+Channels are grouped country first, genre within (`PH - News`, `UK - Sports`, ...).
 
 To rebuild on demand, open the **Actions** tab and run **build-playlists** manually.

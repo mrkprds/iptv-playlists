@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
-Build merged IPTV playlists from iptv-org, in several sorting variants.
+Build a merged IPTV playlist from iptv-org plus a few extra sources.
 
 Produces (in OUT_DIR):
-    iptv-flat.m3u            no groups at all - one long alphabetical list
-    iptv-by-country.m3u      grouped by country     (PH, UK, US, ...)
-    iptv-by-genre.m3u        grouped by genre       (News, Movies, ...)  [iptv-org's own tags]
     iptv-country-genre.m3u   grouped "PH - News"    country first, genre within
-    iptv-genre-country.m3u   grouped "News - PH"    genre first, country within
 
-Point UHF at whichever one you like; you can add more than one.
+Other groupings are one-liners in main() if ever wanted again, e.g.
+    write("iptv-flat.m3u", channels, lambda c: None)
+    write("iptv-by-country.m3u", channels, lambda c: c.origin)
 
 Requires: python3 only (stdlib).
 Run:      python3 build_iptv.py
@@ -25,12 +23,17 @@ OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 TIMEOUT = 45
 
 # ---------------------------------------------------------------- sources ---
-# label -> path (relative to BASE) or a full http(s) URL.  Label is what shows
-# up as the group name.
+# label -> path (relative to BASE) or a full http(s) URL, or a list of them.
+# Label is what shows up as the group name.  With several sources under one
+# label, earlier ones win: by URL, and by normalised channel name (so the same
+# channel under a different URL in a later source is skipped).
 # Comment out anything you don't want.
 
 COUNTRIES = {
-    "PH": "https://raw.githubusercontent.com/Harleythetech/IPHTV/refs/heads/main/ph.m3u",
+    "PH": [
+        "countries/ph.m3u",           # iptv-org first: live, tagged, higher-res copies win
+        "https://raw.githubusercontent.com/Harleythetech/IPHTV/refs/heads/main/ph.m3u",
+    ],
     "UK": "countries/uk.m3u",       # note: "uk", NOT "gb"
     "US": "countries/us.m3u",
     "FR": "countries/fr.m3u",
@@ -117,6 +120,14 @@ def blocked(name):
     return any(rx.search(name) for rx in BLOCK_RE)
 
 
+NAME_NOISE_RE = re.compile(r"\([^)]*\)|\[[^\]]*\]|[^A-Za-z0-9]")
+
+
+def name_key(name):
+    """'FilAm TV Network (1080p) [Not 24/7]' -> 'filamtvnetwork'."""
+    return NAME_NOISE_RE.sub("", name).lower()
+
+
 def parse(body, origin, is_country):
     """Yield Channel objects. Keeps #EXTVLCOPT lines, which carry the
     user-agent / referer some streams require."""
@@ -169,20 +180,31 @@ def parse(body, origin, is_country):
 def collect():
     by_url = {}
     order = list(COUNTRIES.items()) + list(CATEGORIES.items())
-    for label, path in order:
+    for label, paths in order:
         is_country = label in COUNTRIES
-        try:
-            body = fetch(path)
-        except Exception as e:
-            print(f"  !! {label:<12} failed: {e}", file=sys.stderr)
-            continue
-        added = 0
-        for ch in parse(body, label, is_country):
-            if ch.url in by_url:
-                continue          # first list wins; countries are fetched first
-            by_url[ch.url] = ch
-            added += 1
-        print(f"  {label:<12} +{added}")
+        if isinstance(paths, str):
+            paths = [paths]
+        label_names = set()       # name keys seen in earlier sources of this label
+        for path in paths:
+            try:
+                body = fetch(path)
+            except Exception as e:
+                print(f"  !! {label:<12} failed: {path}: {e}", file=sys.stderr)
+                continue
+            added, skipped, new_names = 0, 0, set()
+            for ch in parse(body, label, is_country):
+                if ch.url in by_url:
+                    continue      # first list wins; countries are fetched first
+                if name_key(ch.name) in label_names:
+                    skipped += 1  # same channel, other URL, earlier source of this label
+                    continue
+                new_names.add(name_key(ch.name))
+                by_url[ch.url] = ch
+                added += 1
+            label_names |= new_names
+            note = f"  ({skipped} dupes by name)" if skipped else ""
+            src = f"  <- {path}" if len(paths) > 1 else ""
+            print(f"  {label:<12} +{added}{note}{src}")
     return list(by_url.values())
 
 
@@ -207,11 +229,7 @@ def main():
 
     print(f"\n{len(channels)} unique channels after dedupe\n")
     print("writing:")
-    write("iptv-flat.m3u", channels, lambda c: None)
-    write("iptv-by-country.m3u", channels, lambda c: c.origin)
-    write("iptv-by-genre.m3u", channels, lambda c: c.genre)
     write("iptv-country-genre.m3u", channels, lambda c: f"{c.origin} - {c.genre}")
-    write("iptv-genre-country.m3u", channels, lambda c: f"{c.genre} - {c.origin}")
     print(f"\nwritten to {OUT_DIR}")
     return 0
 
