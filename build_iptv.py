@@ -25,11 +25,12 @@ OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 TIMEOUT = 45
 
 # ---------------------------------------------------------------- sources ---
-# label -> path.  Label is what shows up as the group name.
+# label -> path (relative to BASE) or a full http(s) URL.  Label is what shows
+# up as the group name.
 # Comment out anything you don't want.
 
 COUNTRIES = {
-    "PH": "countries/ph.m3u",
+    "PH": "https://raw.githubusercontent.com/Harleythetech/IPHTV/refs/heads/main/ph.m3u",
     "UK": "countries/uk.m3u",       # note: "uk", NOT "gb"
     "US": "countries/us.m3u",
     "FR": "countries/fr.m3u",
@@ -106,7 +107,7 @@ class Channel:
 
 
 def fetch(path):
-    url = BASE + path
+    url = path if path.startswith(("http://", "https://")) else BASE + path
     req = urllib.request.Request(url, headers={"User-Agent": "playlist-builder/1.0"})
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         return r.read().decode("utf-8", "replace")
