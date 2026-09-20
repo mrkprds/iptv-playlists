@@ -13,9 +13,12 @@ Requires: python3 only (stdlib).
 Run:      python3 build_iptv.py
 """
 
+import concurrent.futures
 import os
 import re
+import socket
 import sys
+import urllib.error
 import urllib.request
 
 BASE = "https://iptv-org.github.io/iptv/"
@@ -69,6 +72,15 @@ GEO_KEEP = {"PH"}
 # Drop entries tagged [Not 24/7] (part-time regional stations).
 DROP_PART_TIME = False
 
+# Probe every stream after merging and drop the ones that are definitively
+# dead.  Only hard failures count: DNS not resolving, connection refused, or
+# HTTP 404/410/451.  A 403, a timeout or a TLS error is kept, because from the
+# GitHub Actions runner (US) those often just mean "geo-blocked from here".
+CHECK_STREAMS = True
+CHECK_WORKERS = 16
+CHECK_TIMEOUT = 10
+DROP_VERDICTS = {"dns", "refused", "http404", "http410", "http451"}
+
 # Drop entries carrying any of these iptv-org genre tags (tags are ';'-separated).
 GENRE_BLOCKLIST = {"Religious"}
 
@@ -119,6 +131,17 @@ class Channel:
 
     def sort_key(self):
         return self.name.lower()
+
+    def header(self, key):
+        """Value of http-user-agent / http-referrer from the attrs or an
+        #EXTVLCOPT line, so a probe sends what the player would send."""
+        m = re.search(rf'{key}="([^"]*)"', self.attrs)
+        if m:
+            return m.group(1)
+        for e in self.extras:
+            if e.startswith(f"#EXTVLCOPT:{key}="):
+                return e.split("=", 1)[1]
+        return None
 
 
 def fetch(path):
@@ -222,6 +245,44 @@ def collect():
     return list(by_url.values())
 
 
+def probe(ch):
+    headers = {"User-Agent": ch.header("http-user-agent") or "Mozilla/5.0",
+               "Range": "bytes=0-2047"}
+    ref = ch.header("http-referrer")
+    if ref:
+        headers["Referer"] = ref
+    try:
+        with urllib.request.urlopen(urllib.request.Request(ch.url, headers=headers),
+                                    timeout=CHECK_TIMEOUT):
+            return "live"
+    except urllib.error.HTTPError as e:
+        return f"http{e.code}"
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, socket.gaierror):
+            return "dns"
+        if isinstance(e.reason, ConnectionRefusedError):
+            return "refused"
+        return "other"
+    except Exception:
+        return "other"
+
+
+def check(channels):
+    print(f"checking {len(channels)} streams ({CHECK_WORKERS} workers, {CHECK_TIMEOUT}s timeout)...")
+    with concurrent.futures.ThreadPoolExecutor(CHECK_WORKERS) as ex:
+        verdicts = list(ex.map(probe, channels))
+    kept, dropped = [], {}
+    for ch, v in zip(channels, verdicts):
+        if v in DROP_VERDICTS:
+            dropped[v] = dropped.get(v, 0) + 1
+        else:
+            kept.append(ch)
+    live = sum(1 for v in verdicts if v == "live")
+    summary = ", ".join(f"{k} {n}" for k, n in sorted(dropped.items()))
+    print(f"  {live} live, {len(channels) - live} not; dropped {len(channels) - len(kept)} ({summary or 'none'})")
+    return kept
+
+
 def write(fname, channels, group_fn):
     rows = sorted(channels, key=lambda c: ((group_fn(c) or ""), c.sort_key()))
     out = ["#EXTM3U"]
@@ -242,6 +303,9 @@ def main():
         return 1
 
     print(f"\n{len(channels)} unique channels after dedupe\n")
+    if CHECK_STREAMS:
+        channels = check(channels)
+        print()
     print("writing:")
     write("iptv-country-genre.m3u", channels, lambda c: f"{c.origin} - {c.genre}")
     print(f"\nwritten to {OUT_DIR}")
