@@ -41,7 +41,6 @@ COUNTRIES = {
     "NO": "countries/no.m3u",
     "ES": "countries/es.m3u",
     "IT": "countries/it.m3u",
-    "PT": "countries/pt.m3u",
     "GR": "countries/gr.m3u",
     "TR": "countries/tr.m3u",
     "SG": "countries/sg.m3u",
